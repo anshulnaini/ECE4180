@@ -1,0 +1,19 @@
+#include <Arduino.h>
+#define BUTTON_PIN 4
+#define LED_PIN 7
+
+
+void setup() {
+  pinMode(LED_PIN, OUTPUT);
+  pinMode(BUTTON_PIN, INPUT_PULLDOWN);
+  Serial.begin(115200);
+}
+
+void loop() {
+  int buttonValue = digitalRead(BUTTON_PIN);
+  if (buttonValue == HIGH) {
+    digitalWrite(LED_PIN, HIGH);
+  } else {
+    digitalWrite(LED_PIN, LOW);
+  }
+}

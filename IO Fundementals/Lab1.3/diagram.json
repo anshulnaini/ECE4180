@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "author": "Anshul Naini",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "board-esp32-c6-devkitc-1", "id": "esp", "top": 0, "left": 0, "attrs": {} },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn1",
+      "top": 15.8,
+      "left": -163.2,
+      "attrs": { "color": "green", "xray": "1" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn2",
+      "top": 92.6,
+      "left": -163.2,
+      "attrs": { "color": "green", "xray": "1" }
+    }
+  ],
+  "connections": [
+    [ "esp:TX", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX", "$serialMonitor:TX", "", [] ],
+    [ "esp:3V3", "btn1:1.r", "green", [ "v0" ] ],
+    [ "esp:3V3", "btn2:2.r", "green", [ "v-23.51", "h-178.28", "v144", "h86.4", "v-28.8" ] ],
+    [ "btn1:2.r", "esp:4", "green", [ "h0" ] ],
+    [ "btn2:1.r", "esp:5", "green", [ "v-48", "h9.8" ] ]
+  ],
+  "dependencies": {}
+}

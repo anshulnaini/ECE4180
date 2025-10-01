@@ -1,0 +1,47 @@
+#include <Arduino.h>
+#include <Wire.h>
+#include <Adafruit_MPR121.h>
+
+Adafruit_MPR121 touchSensor = Adafruit_MPR121();
+
+
+#define I2C_SDA_PIN 21
+#define I2C_SCL_PIN 22
+#define I2C_FREQ    400000
+#define MPR121_ADDR 0x5A
+
+Adafruit_MPR121 mpr = Adafruit_MPR121();
+
+uint16_t lastTouched = 0;
+
+const char* keyLabel[12] = {"1","2","3","4","5","6","7","8","9","*","0","#"};
+
+void setup() {
+  Serial.begin(115200);
+  delay(5000);
+  Serial.println("MPR121 test");
+  Wire.setPins(I2C_SDA_PIN, I2C_SCL_PIN);
+  mpr.setAutoconfig(true);
+  //mpr.setThresholds(2, 1);
+  mpr.begin(MPR121_ADDR);
+}
+
+void loop() {
+
+  uint16_t currTouched = mpr.touched();
+
+  uint16_t justPressed = currTouched & (~lastTouched);
+  Serial.println(currTouched);
+  Serial.println(justPressed);
+  Serial.println("----");
+
+  for (uint8_t i = 0; i < 12; i++) {
+    if (justPressed & (1 << i)) {
+      Serial.print("Key pressed: ");
+      Serial.println(keyLabel[i]);
+    }
+  }
+
+  lastTouched = currTouched;
+  delay(100);
+}

@@ -1,0 +1,14 @@
+[wokwi]
+version = 1
+
+# Point to PlatformIO’s build outputs
+firmware = ".pio/build/esp32-c6-devkitc-1/firmware.bin"
+elf      = ".pio/build/esp32-c6-devkitc-1/firmware.elf"
+
+# Optional: expose the simulated serial port over TCP (RFC2217)
+rfc2217ServerPort = 4000
+
+# Optional: forward a local port to the ESP32 (great for web servers)
+[[net.forward]]
+from = "localhost:8180"   # you open http://localhost:8180 on your PC
+to   = "target:80"        # forwarded to port 80 inside the simulated ESP32
