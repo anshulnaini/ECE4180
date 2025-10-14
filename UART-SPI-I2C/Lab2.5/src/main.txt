@@ -1,0 +1,119 @@
+#include <Arduino.h>
+#include <Wire.h>
+#include "ICM_20948.h"                
+#include <Goldelox_Serial_4DLib.h>   
+
+#define SDA_PIN 2
+#define SCL_PIN 3
+#define IMU_ADDR 0x68             
+
+#define LCD_RX 21                     
+#define LCD_TX 20              
+      
+
+HardwareSerial LCDUart(1);
+Goldelox_Serial_4DLib Display(&LCDUart);
+ICM_20948_I2C imu;
+
+const uint16_t LCD_WIDTH  = 128;
+const uint16_t LCD_HEIGHT = 128;
+const uint16_t COLOR_BLACK = 0x0000;
+const uint16_t COLOR_RED   = 0xF800;
+const uint16_t COLOR_BLUE  = 0x001F;
+const uint16_t COLOR_GREEN = 0x07E0;
+const uint16_t COLOR_YELLOW= 0xFFE0;
+const uint16_t COLORS[] = { COLOR_RED, COLOR_BLUE, COLOR_GREEN, COLOR_YELLOW };
+
+int16_t  ballX = LCD_WIDTH / 2;
+int16_t  ballY = LCD_HEIGHT / 2;
+uint8_t  ballR = 6;
+uint16_t ballColor = COLOR_RED;
+uint16_t bgColor   = COLOR_BLACK;
+uint8_t  stepSize  = 3;
+
+const float TILT_TH = 0.45f;           
+void drawBall(uint16_t color) {
+  Display.gfx_CircleFilled(ballX, ballY, ballR, color);
+}
+void eraseBall() { drawBall(bgColor); }
+
+void changeBallColor() {
+  static int idx = 0;
+  idx = (idx + 1) % (sizeof(COLORS)/sizeof(COLORS[0]));
+  ballColor = COLORS[idx];
+}
+
+bool uLCD_probe(Stream &s, uint16_t cmd, uint32_t timeout_ms = 300) {
+  while (s.available()) s.read();
+  s.write(uint8_t(cmd >> 8));
+  s.write(uint8_t(cmd & 0xFF));
+  uint32_t t0 = millis();
+  while (millis() - t0 < timeout_ms) {
+    if (s.available()) return s.read() == 0x06;
+  }
+  return false;
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(100);
+
+  // LCD
+  LCDUart.begin(9600, SERIAL_8N1, LCD_RX, LCD_TX);
+  delay(1200);
+  if (uLCD_probe(LCDUart, 0xFFD7)) {
+    Serial.println("uLCD OK");
+  } else {
+    Serial.println("uLCD no ACK");
+  }
+  Display.gfx_Cls();
+  drawBall(ballColor);
+
+  // IMU
+  Wire.begin(SDA_PIN, SCL_PIN);
+  if (imu.begin(Wire, IMU_ADDR) != ICM_20948_Stat_Ok) {
+    Serial.println("ICM-20948 not found");
+  } else {
+    Serial.println("ICM-20948 ready");
+  }
+}
+
+void loop() {
+  if (!imu.dataReady()) {
+    delay(20);
+    return;
+  }
+  imu.getAGMT();
+
+  float ax = imu.accX() / 1000.0f;
+  float ay = imu.accY() / 1000.0f;
+
+  int8_t dx = 0, dy = 0;
+  if (ax >  TILT_TH) dx =  1;
+  if (ax < -TILT_TH) dx = -1;
+  if (ay >  TILT_TH) dy = -1;  // tilt forward moves up
+  if (ay < -TILT_TH) dy =  1;  // tilt back moves down
+
+  if (dx != 0 || dy != 0) {
+    eraseBall();
+    int16_t oldX = ballX;
+    int16_t oldY = ballY;
+
+    ballX += dx * stepSize;
+    ballY += dy * stepSize;
+
+    int16_t clampedX = constrain(ballX, ballR, LCD_WIDTH  - 1 - ballR);
+    int16_t clampedY = constrain(ballY, ballR, LCD_HEIGHT - 1 - ballR);
+
+    if (clampedX != ballX || clampedY != ballY) {
+      changeBallColor();
+    }
+
+    ballX = clampedX;
+    ballY = clampedY;
+
+    drawBall(ballColor);
+  }
+
+  delay(40); 
+}
