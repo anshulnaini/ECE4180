@@ -37,9 +37,27 @@ void setup() {
   pCharacteristic = pService->createCharacteristic(
     CHARACTERISTIC_UUID,
     BLECharacteristic::PROPERTY_READ |
-    BLECharacteristic::PROPERTY_NOTIFY
+    BLECharacteristic::PROPERTY_NOTIFY |
+    BLECharacteristic::PROPERTY_WRITE
   );
   pCharacteristic->setValue("Button state: RELEASED");
+
+  class CharCallbacks : public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *c) override {
+      String v = c->getValue();          // <-- returns Arduino String
+      if (v.length() > 0) {
+        char b = v.charAt(0);            // first byte written
+        if (b == '1') {
+          digitalWrite(SERVER_LED_PIN, HIGH);
+          Serial.println("Server LED -> ON (client write)");
+        } else if (b == '0') {
+          digitalWrite(SERVER_LED_PIN, LOW);
+          Serial.println("Server LED -> OFF (client write)");
+        }
+      }
+    }
+  };
+  pCharacteristic->setCallbacks(new CharCallbacks());
 
 
   pService->start();

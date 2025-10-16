@@ -17,6 +17,9 @@ static boolean doConnect = false;
 static boolean connected = false;
 static boolean doScan = false;
 
+
+bool lastButton = HIGH;
+
 // BLE objects
 static BLERemoteCharacteristic *pRemoteCharacteristic = nullptr;
 static BLEAdvertisedDevice *myDevice = nullptr;
@@ -146,8 +149,19 @@ void loop() {
   }
 
   if (connected) {
-    // No polling needed; notifications drive the LED.
-    // (If you really want polling, you could readValue() here.)
+  bool reading = digitalRead(BUTTON);   // BUTTON uses INPUT_PULLUP
+  if (reading != lastButton) {
+    lastButton = reading;
+    uint8_t cmd = (reading == LOW) ? '1' : '0'; // pressed -> ON, released -> OFF
+    if (pRemoteCharacteristic && pRemoteCharacteristic->canWrite()) {
+      pRemoteCharacteristic->writeValue(&cmd, 1, false); // no response needed
+      Serial.print("Wrote to server LED: ");
+      Serial.println((char)cmd);
+    } else {
+      Serial.println("Characteristic not writable (check server props).");
+    }
+  }
+  
   }
 
   delay(50);
