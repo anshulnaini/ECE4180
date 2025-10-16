@@ -10,10 +10,12 @@
 
 #define SERVICE_UUID        "c83086a7-ae34-49e0-8bfd-b399b8a97843"
 #define CHARACTERISTIC_UUID "6b055572-1602-4d75-a4d8-e40c836bb901"
+#define MESSAGE_CHARACTERISTIC_UUID "a3b25c72-6f6d-4b02-9557-921f8b3e4a11"
 
 
 BLECharacteristic *pCharacteristic;
 BLECharacteristic *pMessageCharacteristic; 
+
 
 #define BUTTON_PIN 10
 #define SERVER_LED_PIN 15 
@@ -32,6 +34,30 @@ void setup() {
   BLEDevice::init("Matt's ESP Controller");          
   BLEServer *pServer = BLEDevice::createServer();  
   BLEService *pService = pServer->createService(SERVICE_UUID);
+
+  // --- message characteristic (READ | WRITE | NOTIFY) ---
+pMessageCharacteristic = pService->createCharacteristic(
+  MESSAGE_CHARACTERISTIC_UUID,
+  BLECharacteristic::PROPERTY_READ |
+  BLECharacteristic::PROPERTY_WRITE |
+  BLECharacteristic::PROPERTY_NOTIFY
+);
+pMessageCharacteristic->setValue("Server ready");
+
+  // Print anything the client writes to this message characteristic
+  class MsgCallbacks : public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *c) override {
+      String s = c->getValue();            // Arduino String (avoids std::string issue)
+      if (s.length()) {
+        Serial.print("[Client -> Server] ");
+        Serial.println(s);
+        // Echo it back to all subscribers so both serial monitors see it
+        c->setValue(s.c_str());
+        c->notify();
+      }
+    }
+  };
+  pMessageCharacteristic->setCallbacks(new MsgCallbacks());
 
 
   pCharacteristic = pService->createCharacteristic(
@@ -71,6 +97,17 @@ void setup() {
 }
 
 void loop() {
+
+  if (Serial.available()) {
+    String line = Serial.readStringUntil('\n');
+    line.trim();
+    if (line.length()) {
+      pMessageCharacteristic->setValue(line.c_str());
+      pMessageCharacteristic->notify();
+      Serial.print("[Server -> Client] ");
+      Serial.println(line);
+    }
+  }
   int current = digitalRead(BUTTON_PIN);
   if (current != buttonState) {
     buttonState = current;
