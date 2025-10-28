@@ -1,0 +1,93 @@
+#include <Arduino.h>
+#include <esp_now.h>
+#include <WiFi.h>
+#include <Goldelox_Serial_4DLib.h>
+
+
+#define LCD_RX 21
+#define LCD_TX 20
+
+HardwareSerial LCDUart(1);
+Goldelox_Serial_4DLib Display(&LCDUart);
+
+const uint16_t LCD_WIDTH = 128;
+const uint16_t LCD_HEIGHT = 128;
+const uint16_t COLOR_BLACK = 0x0000;
+const uint16_t COLOR_RED = 0xF800;
+const uint16_t COLOR_BLUE = 0x001F;
+
+int16_t ballX = LCD_WIDTH / 2;
+int16_t ballY = LCD_HEIGHT / 2;
+uint8_t ballR = 6;
+uint16_t ballColor = COLOR_RED;
+uint16_t bgColor = COLOR_BLACK;
+uint8_t stepSize = 3;
+
+
+typedef struct struct_message {
+  int8_t dx;
+  int8_t dy;
+  bool centerPressed;
+} struct_message;
+
+struct_message incoming;
+
+void drawBall(uint16_t color) {
+  uint16_t x = constrain(ballX, ballR, LCD_WIDTH - 1 - ballR);
+  uint16_t y = constrain(ballY, ballR, LCD_HEIGHT - 1 - ballR);
+  Display.gfx_CircleFilled(x, y, ballR, color);
+}
+
+void eraseBall() {
+  drawBall(bgColor);
+}
+
+void resetBall() {
+  eraseBall();
+  ballColor = (ballColor == COLOR_RED) ? COLOR_BLUE : COLOR_RED;
+  ballX = LCD_WIDTH / 2;
+  ballY = LCD_HEIGHT / 2;
+  drawBall(ballColor);
+}
+
+void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *incomingData, int len) {
+  memcpy(&incoming, incomingData, sizeof(incoming));
+
+  const uint8_t *mac = info->src_addr;  // optional: get sender MAC
+  Serial.printf("Message from %02X:%02X:%02X:%02X:%02X:%02X | len: %d\n",
+                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], len);
+
+  if (incoming.centerPressed) {
+    resetBall();
+    return;
+  }
+
+  if (incoming.dx != 0 || incoming.dy != 0) {
+    eraseBall();
+    ballX += incoming.dx * stepSize;
+    ballY += incoming.dy * stepSize;
+    ballX = constrain(ballX, ballR, LCD_WIDTH - 1 - ballR);
+    ballY = constrain(ballY, ballR, LCD_HEIGHT - 1 - ballR);
+    drawBall(ballColor);
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  LCDUart.begin(9600, SERIAL_8N1, LCD_RX, LCD_TX);
+  delay(3000);
+  Display.gfx_Cls();
+
+  drawBall(ballColor);
+
+  WiFi.mode(WIFI_STA);
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("ESP-NOW init failed");
+    return;
+  }
+
+  esp_now_register_recv_cb(OnDataRecv);
+}
+
+void loop() {}
