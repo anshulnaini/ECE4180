@@ -1,142 +1,103 @@
-//ESP32 as a Soft AP
-//Adapted by T Goo for ECE 4180
+#include <Arduino.h>
+#include <Goldelox_Serial_4DLib.h>
+#include <Preferences.h> 
 
-#include <WiFi.h>
+// Pin definitions
+#define LCD_RX 21
+#define LCD_TX 20
 
-/*********************************
-1.TODO: Generate an ssid (ESP32-<your ESP number>)
-and password
-**********************************/
-const char* ssid     = "ESP32-4180";
-const char* password = "ece4180pass";
+// LCD parameters
+const uint16_t LCD_WIDTH  = 128;
+const uint16_t LCD_HEIGHT = 128;
+const uint16_t COLOR_BLACK = 0x0000;
+const uint16_t COLOR_RED   = 0xF800;
 
-//set web server port number to 80
-WiFiServer server(80);
+// Ball parameters
+int16_t  ballX;
+int16_t  ballY;
+int8_t   velX;
+int8_t   velY;
+uint8_t  ballR = 6;
+uint16_t ballColor = COLOR_RED;
+uint16_t bgColor   = COLOR_BLACK;
 
-//var to store the HTTP request data 
-String header;
 
-// output state to store status of HTML and GPIO 
-String output7State = "off";
+const uint16_t periodMs = 25;  
 
+HardwareSerial LCDUart(1);
+Goldelox_Serial_4DLib Display(&LCDUart);
+Preferences prefs;
+
+
+void drawBall(uint16_t color);
+void eraseBall();
+void saveState();
+void loadState();
+
+void drawBall(uint16_t color) {
+  uint16_t x = constrain(ballX, ballR, LCD_WIDTH - 1 - ballR);
+  uint16_t y = constrain(ballY, ballR, LCD_HEIGHT - 1 - ballR);
+  Display.gfx_CircleFilled(x, y, ballR, color);
+}
+
+void eraseBall() {
+  drawBall(bgColor);
+}
+
+void saveState() {
+  prefs.begin("ballState", false);
+  prefs.putInt("x", ballX);
+  prefs.putInt("y", ballY);
+  prefs.putInt("vx", velX);
+  prefs.putInt("vy", velY);
+  prefs.end();
+}
+
+void loadState() {
+  prefs.begin("ballState", true);
+  ballX = prefs.getInt("x", LCD_WIDTH / 2);
+  ballY = prefs.getInt("y", LCD_HEIGHT / 2);
+  velX  = prefs.getInt("vx", 3);
+  velY  = prefs.getInt("vy", 2);
+  prefs.end();
+}
 
 void setup() {
   Serial.begin(115200);
-  delay(3000);
+  LCDUart.begin(9600, SERIAL_8N1, LCD_RX, LCD_TX);
+  delay(3200);
 
-  /*****************************
-  1.5 TODO: setup GPIO 7 as an output
-  ****************************/
-  pinMode(7, OUTPUT);
-  digitalWrite(7, LOW);
+  loadState();
 
-  Serial.println("\nSetting AP (Access Point)…");
-  WiFi.softAP(ssid, password);
+  Display.gfx_Cls();
+  drawBall(ballColor);
 
-  /**********************************
-
-  2. TODO: Print out the IP address of the ESP32.Read this documentation to get the IP address.
-
-  ESP32 acts as a Wifi AP that constantly broadcasts an html. Stations that connect to the server and visit the correlating IP address can get access to this HTML.
-
-  Note that ESP32 is acting as a SoftAP (Software Access Point). 
-
-  https://espressif-docs.readthedocs-hosted.com/projects/arduino-esp32/en/latest/api/wifi.html
-  **************************************/
-  Serial.print("AP IP address: ");  
-  
-  IPAddress IP = WiFi.softAPIP();
-  while (!IP) {
-    Serial.println("Populate and print out IPAddress");
-    delay(5000);
-    IP = WiFi.softAPIP();
-  }
-  Serial.println(IP);
-
-  server.begin(); //Starts server
+  Serial.println("Bouncing ball with NVS state restore started.");
 }
 
+void loop() {
+  static uint32_t lastStep = 0;
 
-void loop(){
-  WiFiClient client = server.available();   // Listen for incoming clients
+  if (millis() - lastStep >= periodMs) {
+    lastStep += periodMs;
 
-  if (client) { // If a new client connects,
-    Serial.println("New Client.");   
-    String currentLine = "";  // make a String to hold incoming data from client
-    while (client.connected()) {   // loop while the client's connected
-      if (client.available()) {    // if there's bytes to read from client
-        char c = client.read();    // read a byte, then
-        header += c;              //append the byte to header var
-        if (c == '\n') {          // if the byte is a newline character
-          // if the current line is blank, you got two newline characters in a row.
-          // that's the end of the client HTTP request, so send a response:
-          if (currentLine.length() == 0) {
-            // HTTP headers ALWAYS start with a response code (e.g. HTTP/1.1 200 OK) and a content-type so the client knows what's coming, then a blank line:
-            client.println("HTTP/1.1 200 OK");
-            client.println("Content-type:text/html");
-            client.println("Connection: close");
-            client.println();
-            
-            /***********************************
-            3. TODO: PRINT OUT THE header car (given at top).
-            3.5 TODO: PARSE through the header data and update the output7state, and update the GPIO7 output.
-            *************************************/
-            Serial.println("----- HTTP REQUEST HEADER START -----");
-            Serial.print(header);
-            Serial.println("----- HTTP REQUEST HEADER END   -----");
+    eraseBall();
 
-            if (header.indexOf("GET /7/on") >= 0) {
-              output7State = "on";
-              digitalWrite(7, HIGH);
-            } else if (header.indexOf("GET /7/off") >= 0) {
-              output7State = "off";
-              digitalWrite(7, LOW);
-            }
+    // Update position
+    ballX += velX;
+    ballY += velY;
 
-            //(THIS IS THE HTML BEING BROADCASTED TO STATION)
-            client.println("<!DOCTYPE html><html>");
-            client.println("<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
-            client.println("<link rel=\"icon\" href=\"data:,\">");
-            // CSS for on/off buttons 
-            client.println("<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}");
-            client.println(".button { background-color: #4CAF50; border: none; color: white; padding: 16px 40px;");
-            client.println("text-decoration: none; font-size: 30px; margin: 2px; cursor: pointer;}");
-            client.println(".button2 {background-color: #555555;}</style></head>");
-            
-            /***********************************
-            4. TODO: change "Default Header" to the name of the ssid
-            *************************************/
-            client.print("<body><h1>");
-            client.print(ssid); 
-            client.println("</h1>");        
-
-            // Display current state, and ON/OFF buttons for GPIO 7  
-            client.println("<p>GPIO 7 - State " + output7State + "</p>");
-            // If the output7State is off, display the ON button       
-            if (output7State=="off") {
-              client.println("<p><a href=\"/7/on\"><button class=\"button\">ON</button></a></p>");
-            } else { //output7state=on display the OFF button
-              client.println("<p><a href=\"/7/off\"><button class=\"button button2\">OFF</button></a></p>");
-            } 
-            client.println("</body></html>");
-            // The HTTP response ends with another blank line
-            client.println();
-            // Break out of the while loop
-            break;
-          } else { // if you got a newline, then clear currentLine
-            currentLine = "";
-          }
-        } else if (c != '\r') {  // if you got anything else but a carriage return character,
-          currentLine += c;      // add it to the end of the currentLine
-        }
-      }
+    // Check wall collisions
+    if (ballX - ballR <= 0 || ballX + ballR >= LCD_WIDTH - 1) {
+      velX = -velX;
+      ballX = constrain(ballX, ballR, LCD_WIDTH - 1 - ballR);
     }
-    // Clear the header variable
-    header = "";
+    if (ballY - ballR <= 0 || ballY + ballR >= LCD_HEIGHT - 1) {
+      velY = -velY;
+      ballY = constrain(ballY, ballR, LCD_HEIGHT - 1 - ballR);
+    }
 
-    // Close connection
-    client.stop();
-    Serial.println("Client disconnected.");
-    Serial.println("");
+    drawBall(ballColor);
+    saveState(); 
   }
 }

@@ -1,42 +1,195 @@
-#include <Arduino.h>
+#include <Ticker.h>
+#include <Adafruit_NeoPixel.h>
 
-#include <Adafruit_MCP23X17.h>
+#define BTN_PIN   23          
+#define NEO_PIN   8          
+#define NEO_COUNT 1
 
-#define BUTTON_PIN  1  // GPA1
-#define LED_PIN     0  // GPA0
+Adafruit_NeoPixel strip(NEO_COUNT, NEO_PIN, NEO_GRB + NEO_KHZ800);
 
-#define CS_PIN   10
-#define MOSI_PIN 1
-#define MISO_PIN 0
-#define SCK_PIN  8
+Ticker secondTicker;          // 1 Hz — step countdown
+Ticker strobeTicker;          // Fast — create red flashes each second
+Ticker greenHoldTicker;       // One-shot — turn off green after success
 
-Adafruit_MCP23X17 mcp;
+const uint8_t START_COUNT = 3;     // 3, 2, 1
+const float   STROBE_PERIOD = 0.15; // seconds per on/off toggle (~3–4 flashes/s)
+const uint16_t RED_BRIGHT   = 50;   // 0–255
+const uint16_t GREEN_BRIGHT = 50;   // 0–255
+const uint16_t OFF_BRIGHT   = 0;
 
-// -----------------------------
-void setup() {
-  Serial.begin(9600);
-  while (!Serial);
-  Serial.println("MCP23xxx Button Test!");
+// ---------- State ----------
+enum RunState { IDLE, COUNTDOWN, SHOW_GREEN };
+volatile RunState state = IDLE;
 
-  if (!mcp.begin_SPI(CS_PIN, SCK_PIN, MISO_PIN, MOSI_PIN, 0)) {
-    Serial.println("Error.");
-    while (1);
+volatile bool secondTickFlag = false;   // set by secondTicker
+volatile bool strobeTickFlag = false;   // set by strobeTicker
+volatile bool greenOffFlag   = false;   // set by greenHoldTicker
+
+uint8_t currentCount = START_COUNT;     // 3 -> 2 -> 1
+uint8_t flashesRemaining = 0;           // how many red ON events left this second
+bool    ledOnPhase = false;             // toggled by strobe to blink
+
+// Button debounce
+unsigned long lastBtnChange = 0;
+const unsigned long DEBOUNCE_MS = 30;
+bool lastBtnState = HIGH; // using INPUT_PULLUP
+
+void setRGB(uint8_t r, uint8_t g, uint8_t b) {
+  strip.setPixelColor(0, strip.Color(r, g, b));
+  strip.show();
+}
+
+void ledOff()   { setRGB(0, 0, 0); }
+void ledRed()   { setRGB(RED_BRIGHT, 0, 0); }
+void ledGreen() { setRGB(0, GREEN_BRIGHT, 0); }
+
+void IRAM_ATTR onSecondTick() { secondTickFlag = true; }
+void IRAM_ATTR onStrobeTick() { strobeTickFlag = true; }
+void IRAM_ATTR onGreenOff()   { greenOffFlag   = true; }
+
+// ---------- Control helpers ----------
+void startStrobe(uint8_t flashes) {
+  // Each "flash" is an ON event; we'll toggle ON/OFF in loop() using strobeTicker.
+  flashesRemaining = flashes;
+  ledOnPhase = false;       // start with OFF
+  strobeTicker.detach();
+  strobeTicker.attach(STROBE_PERIOD, onStrobeTick);
+  // Debug
+  if (Serial) {
+    Serial.print("[DEBUG] startStrobe: flashes=");
+    Serial.println(flashes);
+    Serial.print("[DEBUG] startStrobe: flashesRemaining=");
+    Serial.println(flashesRemaining);
   }
+}
 
-  // Configure pin for input with pull-up
-  mcp.pinMode(BUTTON_PIN, INPUT_PULLUP);
-  mcp.pinMode(LED_PIN, OUTPUT);
-  mcp.digitalWrite(LED_PIN, LOW); 
+void stopStrobe() {
+  strobeTicker.detach();
+  flashesRemaining = 0;
+  ledOff();
+  if (Serial) {
+    Serial.println("[DEBUG] stopStrobe");
+  }
+}
+
+void startCountdown() {
+  if (state != IDLE) return;
+  state = COUNTDOWN;
+  currentCount = START_COUNT;
+  secondTickFlag = false;
+  strobeTickFlag = false;
+  greenOffFlag   = false;
+
+  secondTicker.detach();
+  secondTicker.attach(1.0, onSecondTick);
+  // Prime the first second’s flashes (3 flashes)
+  // Prime the first second's SINGLE flash
+  startStrobe(1);
+  if (Serial) {
+    Serial.print("[DEBUG] startCountdown: START_COUNT=");
+    Serial.println(START_COUNT);
+  }
+}
+
+void showGreenThenFinish() {
+  state = SHOW_GREEN;
+  stopStrobe();
+  secondTicker.detach();
+  ledGreen();
+  greenHoldTicker.detach();
+  greenHoldTicker.once(1.0, onGreenOff);  // hold green for 1 second
+  if (Serial) {
+    Serial.println("[DEBUG] showGreenThenFinish: showing green for 1s");
+  }
+}
+
+void resetToIdle() {
+  stopStrobe();
+  secondTicker.detach();
+  greenHoldTicker.detach();
+  ledOff();
+  state = IDLE;
+  if (Serial) {
+    Serial.println("[DEBUG] resetToIdle: back to IDLE");
+  }
+}
+
+
+
+void setup() {
+  pinMode(BTN_PIN, INPUT_PULLUP);
+  strip.begin();
+  strip.setBrightness(20);
+  ledOff();
+  Serial.begin(115200);
+  delay(3000);
+  // Small startup debug print
+  Serial.println("[DEBUG] setup: Serial started, pins configured");
 }
 
 void loop() {
-  // LOW = pressed, HIGH = not pressed
-  if (!mcp.digitalRead(BUTTON_PIN)) {
-    Serial.println("Button Pressed!");
-    mcp.digitalWrite(LED_PIN, HIGH); // turn on LED
-  } else {
-    Serial.println("Unpressed!");
-    mcp.digitalWrite(LED_PIN, LOW); // turn off LED
+  // --- Button handling (rising-edge on pullup -> pressed = LOW) ---
+  bool btn = digitalRead(BTN_PIN);
+  unsigned long now = millis();
+  if (btn != lastBtnState && (now - lastBtnChange) > DEBOUNCE_MS) {
+    lastBtnChange = now;
+    lastBtnState = btn;
+    if (btn == LOW && state == IDLE) {
+      Serial.println("[DEBUG] button pressed (LOW) while IDLE -> startCountdown");
+      startCountdown();
+    }
   }
-  delay(500);
+
+  if (strobeTickFlag) {
+    strobeTickFlag = false;
+
+    if (state == COUNTDOWN && flashesRemaining > 0) {
+      ledOnPhase = !ledOnPhase;
+      if (ledOnPhase) {
+        ledRed();
+        if (Serial) {
+          Serial.println("[DEBUG] strobe: LED ON (red)");
+        }
+      } else {
+        // Turn OFF; completed one flash
+        ledOff();
+        flashesRemaining--;
+        if (Serial) {
+          Serial.print("[DEBUG] strobe: LED OFF, flashesRemaining=");
+          Serial.println(flashesRemaining);
+        }
+        if (flashesRemaining == 0) {
+          // Done flashing for this second
+          stopStrobe();
+        }
+      }
+    }
+  }
+
+  if (secondTickFlag) {
+    secondTickFlag = false;
+
+    if (state == COUNTDOWN) {
+      //  just completed the previous second. Move to next count.
+      currentCount--;
+      if (Serial) {
+        Serial.print("[DEBUG] second tick: decremented currentCount=");
+        Serial.println(currentCount);
+      }
+      if (currentCount == 0) {
+        // Finished 3,2,1 → show green
+        showGreenThenFinish();
+      } else {
+        // Start the next second’s flashes
+        // single flash per second
+        startStrobe(1);
+      }
+    }
+  }
+
+  if (greenOffFlag) {
+    greenOffFlag = false;
+    Serial.println("[DEBUG] greenHold expired -> resetToIdle");
+    resetToIdle();
+  }
 }
